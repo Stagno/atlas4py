@@ -25,6 +25,7 @@ setup_pybind11(cfg)
 #include "atlas/mesh.h"
 #include "atlas/mesh/actions/BuildEdges.h"
 #include "atlas/meshgenerator.h"
+#include "atlas/output/Gmsh.h"
 
 namespace py = ::pybind11;
 using namespace atlas;
@@ -48,8 +49,36 @@ PYBIND11_MODULE(_atlas4py, m) {
         .def_property_readonly("uid", &StructuredGrid::uid)
         .def_property_readonly("size", &StructuredGrid::size);
 
+    py::class_<PointLonLat>(m, "PointLonLat")
+        .def(py::init([](double lon, double lat) {
+                 return PointLonLat({lon, lat});
+             }),
+             "lon"_a, "lat"_a)
+        .def_property_readonly(
+            "lon", py::overload_cast<>(&PointLonLat::lon, py::const_))
+        .def_property_readonly(
+            "lat", py::overload_cast<>(&PointLonLat::lat, py::const_))
+        .def("__repr__", [](PointLonLat const& p) {
+            return "_atlas4py.PointLonLat(lon=" + std::to_string(p.lon()) +
+                   ", lat=" + std::to_string(p.lat()) + ")";
+        });
+    py::class_<PointXY>(m, "PointXY")
+        .def(py::init([](double x, double y) {
+                 return PointXY({x, y});
+             }),
+             "x"_a, "y"_a)
+        .def_property_readonly("x",
+                               py::overload_cast<>(&PointXY::x, py::const_))
+        .def_property_readonly("y",
+                               py::overload_cast<>(&PointXY::y, py::const_))
+        .def("__repr__", [](PointXY const& p) {
+            return "_atlas4py.PointXY(x=" + std::to_string(p.x()) +
+                   ", y=" + std::to_string(p.y()) + ")";
+        });
+
     py::class_<StructuredGrid, Grid>(m, "StructuredGrid")
-        .def(py::init([](std::string const& s) { return StructuredGrid{s}; }))
+        .def(py::init([](std::string const& s) { return StructuredGrid{s}; }),
+             "gridname"_a)
         .def_property_readonly("valid", &StructuredGrid::valid)
         .def_property_readonly("ny", &StructuredGrid::ny)
         .def_property_readonly(
@@ -59,9 +88,12 @@ PYBIND11_MODULE(_atlas4py, m) {
             "y", py::overload_cast<>(&StructuredGrid::y, py::const_))
         .def_property_readonly("x", &StructuredGrid::x)
         .def("xy",
-             py::overload_cast<idx_t, idx_t>(&StructuredGrid::xy, py::const_))
-        .def("lonlat", py::overload_cast<idx_t, idx_t>(&StructuredGrid::lonlat,
-                                                       py::const_))
+             py::overload_cast<idx_t, idx_t>(&StructuredGrid::xy, py::const_),
+             "i"_a, "j"_a)
+        .def("lonlat",
+             py::overload_cast<idx_t, idx_t>(&StructuredGrid::lonlat,
+                                             py::const_),
+             "i"_a, "j"_a)
         .def_property_readonly("reduced", &StructuredGrid::reduced)
         .def_property_readonly("regular", &StructuredGrid::regular)
         .def_property_readonly("periodic", &StructuredGrid::periodic);
@@ -79,12 +111,11 @@ PYBIND11_MODULE(_atlas4py, m) {
                       py::overload_cast<>(&Mesh::edges))
         .def_property("cells", py::overload_cast<>(&Mesh::cells, py::const_),
                       py::overload_cast<>(&Mesh::cells))
-        .def_property_readonly("generated", &Mesh::generated)
-        .def("build_edges",
-             [](Mesh& m) { return mesh::actions::build_edges(m); })
-        .def("build_node_to_edge_connectivity", [](Mesh& m) {
-            return mesh::actions::build_node_to_edge_connectivity(m);
-        });
+        .def_property_readonly("generated", &Mesh::generated);
+    m.def("build_edges", py::overload_cast<Mesh&>(&mesh::actions::build_edges));
+    m.def("build_node_to_edge_connectivity",
+          py::overload_cast<Mesh&>(
+              &mesh::actions::build_node_to_edge_connectivity));
 
     py::class_<mesh::MultiBlockConnectivity>(m, "MultiBlockConnectivity");
 
@@ -144,13 +175,37 @@ PYBIND11_MODULE(_atlas4py, m) {
         .def_property_readonly("cells", &functionspace::CellColumns::cells)
         .def_property_readonly("valid", &functionspace::CellColumns::valid);
 
-    py::class_<Field>(m, "Field")
+    py::class_<Field>(m, "Field", py::buffer_protocol())
         .def_property_readonly("name", &Field::name)
         .def_property_readonly("datatype", &Field::datatype)
         .def_property_readonly("strides", &Field::strides)
         .def_property_readonly("shape",
-                               py::overload_cast<>(&Field::strides, py::const_))
+                               py::overload_cast<>(&Field::shape, py::const_))
         .def_property_readonly("size", &Field::size)
         .def_property_readonly("rank", &Field::rank)
-        .def_property_readonly("contiguous", &Field::contiguous);
+        .def_buffer([](Field& f) {
+            auto strides = f.strides();
+            std::transform(strides.begin(), strides.end(), strides.begin(),
+                           [&](auto const& stride) {
+                               return stride * f.datatype().size();
+                           });
+            return py::buffer_info(f.storage(), f.datatype().size(),
+                                   py::format_descriptor<double>::format(),
+                                   f.rank(), f.shape(), strides);
+        });
+
+    py::class_<output::Gmsh>(m, "Gmsh")
+        .def(py::init(
+                 [](std::string const& path) { return output::Gmsh{path}; }),
+             "path"_a)
+        .def("write",
+             [](output::Gmsh& gmsh, Mesh const& mesh) { gmsh.write(mesh); },
+             "mesh"_a)
+        .def("write",
+             [](output::Gmsh& gmsh, Field const& field) { gmsh.write(field); },
+             "field"_a)
+        .def("write",
+             [](output::Gmsh& gmsh, Field const& field,
+                FunctionSpace const& fs) { gmsh.write(field, fs); },
+             "field"_a, "functionspace"_a);
 }
