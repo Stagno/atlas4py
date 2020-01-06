@@ -192,11 +192,12 @@ PYBIND11_MODULE(_atlas4py, m) {
         .def_property_readonly("type", &FunctionSpace::type)
         .def("create_field",
              [](FunctionSpace const& fs, std::optional<std::string> const& name,
-                std::optional<int> levels, py::dtype dtype) {
+                std::optional<int> levels, py::object dtype) {
                  util::Config config;
                  if (name) config = config | option::name(*name);
                  if (levels) config = config | option::levels(*levels);
-                 config = config | option::datatype(pybindToAtlas(dtype));
+                 config = config | option::datatype(pybindToAtlas(
+                                       py::dtype::from_args(dtype)));
                  return fs.createField(config);
              },
              "name"_a = std::nullopt, "levels"_a = std::nullopt, "dtype"_a);
