@@ -17,6 +17,7 @@ cfg['libraries'] = ['eckit', 'atlas']
 setup_pybind11(cfg)
 %>
 */
+#include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
@@ -34,14 +35,48 @@ using namespace pybind11::literals;
 namespace pybind11 {
 namespace detail {
 template <>
-struct type_caster<array::ArrayStrides>
-    : public type_caster<std::vector<array::ArrayStrides::value_type>> {};
+struct type_caster<atlas::array::ArrayStrides>
+    : public type_caster<std::vector<atlas::array::ArrayStrides::value_type>> {
+};
 template <>
-struct type_caster<array::ArrayShape>
-    : public type_caster<std::vector<array::ArrayShape::value_type>> {};
+struct type_caster<atlas::array::ArrayShape>
+    : public type_caster<std::vector<atlas::array::ArrayShape::value_type>> {};
 
 }  // namespace detail
 }  // namespace pybind11
+
+namespace {
+std::string atlasToPybind(array::DataType const& dt) {
+    switch (dt.kind()) {
+        case array::DataType::KIND_INT32:
+            return py::format_descriptor<int32_t>::format();
+        case array::DataType::KIND_INT64:
+            return py::format_descriptor<int64_t>::format();
+        case array::DataType::KIND_REAL32:
+            return py::format_descriptor<float>::format();
+        case array::DataType::KIND_REAL64:
+            return py::format_descriptor<double>::format();
+        case array::DataType::KIND_UINT64:
+            return py::format_descriptor<uint64_t>::format();
+        default:
+            return "";
+    }
+}
+array::DataType pybindToAtlas(py::dtype const& dtype) {
+    if (dtype.is(py::dtype::of<int32_t>()))
+        return array::DataType::KIND_INT32;
+    else if (dtype.is(py::dtype::of<int64_t>()))
+        return array::DataType::KIND_INT64;
+    else if (dtype.is(py::dtype::of<float>()))
+        return array::DataType::KIND_REAL32;
+    else if (dtype.is(py::dtype::of<double>()))
+        return array::DataType::KIND_REAL64;
+    else if (dtype.is(py::dtype::of<uint64_t>()))
+        return array::DataType::KIND_UINT64;
+    else
+        return {0};
+}
+}  // namespace
 
 PYBIND11_MODULE(_atlas4py, m) {
     py::class_<Grid>(m, "Grid")
@@ -117,8 +152,23 @@ PYBIND11_MODULE(_atlas4py, m) {
           py::overload_cast<Mesh&>(
               &mesh::actions::build_node_to_edge_connectivity));
 
-    py::class_<mesh::MultiBlockConnectivity>(m, "MultiBlockConnectivity");
+    py::class_<mesh::MultiBlockConnectivity>(m, "MultiBlockConnectivity")
+        .def("__getitem__", [](mesh::MultiBlockConnectivity const& c,
+                               std::tuple<idx_t, idx_t> const& pos) {
+            auto const& [row, col] = pos;
+            return c(row, col);
+        });
 
+    py::class_<mesh::Nodes>(m, "Nodes")
+        .def_property_readonly("size", &mesh::Nodes::size)
+        .def_property_readonly(
+            "edge_connectivity",
+            py::overload_cast<>(&mesh::Nodes::edge_connectivity, py::const_))
+        .def_property_readonly(
+            "cell_connectivity",
+            py::overload_cast<>(&mesh::Nodes::cell_connectivity, py::const_))
+        .def_property_readonly(
+            "lonlat", py::overload_cast<>(&Mesh::Nodes::lonlat, py::const_));
     py::class_<mesh::HybridElements>(m, "HybridElements")
         .def_property_readonly("size", &mesh::HybridElements::size)
         .def("nb_nodes", &mesh::HybridElements::nb_nodes)
@@ -142,14 +192,14 @@ PYBIND11_MODULE(_atlas4py, m) {
         .def_property_readonly("type", &FunctionSpace::type)
         .def("create_field",
              [](FunctionSpace const& fs, std::optional<std::string> const& name,
-                std::optional<int> levels, std::string type) {
+                std::optional<int> levels, py::dtype dtype) {
                  util::Config config;
                  if (name) config = config | option::name(*name);
                  if (levels) config = config | option::levels(*levels);
-                 config = config | option::datatype(type);
+                 config = config | option::datatype(pybindToAtlas(dtype));
                  return fs.createField(config);
              },
-             "name"_a = std::nullopt, "levels"_a = std::nullopt, "type"_a);
+             "name"_a = std::nullopt, "levels"_a = std::nullopt, "dtype"_a);
     py::class_<functionspace::EdgeColumns, FunctionSpace>(m_fs, "EdgeColumns")
         .def(py::init(
             [](Mesh const& m) { return functionspace::EdgeColumns(m); }))
@@ -175,14 +225,24 @@ PYBIND11_MODULE(_atlas4py, m) {
         .def_property_readonly("cells", &functionspace::CellColumns::cells)
         .def_property_readonly("valid", &functionspace::CellColumns::valid);
 
+    py::class_<util::Metadata>(m, "Metadata")
+        .def("__setitem__", [](util::Metadata& m, std::string const& key,
+                               int value) { m.set(key, value); })
+        .def("__setitem__", [](util::Metadata& m, std::string const& key,
+                               std::string value) { m.set(key, value); })
+        .def("__setitem__", [](util::Metadata& m, std::string const& key,
+                               double value) { m.set(key, value); });
+
     py::class_<Field>(m, "Field", py::buffer_protocol())
         .def_property_readonly("name", &Field::name)
-        .def_property_readonly("datatype", &Field::datatype)
         .def_property_readonly("strides", &Field::strides)
         .def_property_readonly("shape",
                                py::overload_cast<>(&Field::shape, py::const_))
         .def_property_readonly("size", &Field::size)
         .def_property_readonly("rank", &Field::rank)
+        .def_property("metadata",
+                      py::overload_cast<>(&Field::metadata, py::const_),
+                      py::overload_cast<>(&Field::metadata))
         .def_buffer([](Field& f) {
             auto strides = f.strides();
             std::transform(strides.begin(), strides.end(), strides.begin(),
@@ -190,8 +250,8 @@ PYBIND11_MODULE(_atlas4py, m) {
                                return stride * f.datatype().size();
                            });
             return py::buffer_info(f.storage(), f.datatype().size(),
-                                   py::format_descriptor<double>::format(),
-                                   f.rank(), f.shape(), strides);
+                                   atlasToPybind(f.datatype()), f.rank(),
+                                   f.shape(), strides);
         });
 
     py::class_<output::Gmsh>(m, "Gmsh")
