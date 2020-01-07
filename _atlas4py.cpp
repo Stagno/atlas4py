@@ -115,6 +115,11 @@ PYBIND11_MODULE(_atlas4py, m) {
     py::class_<StructuredGrid, Grid>(m, "StructuredGrid")
         .def(py::init([](std::string const& s) { return StructuredGrid{s}; }),
              "gridname"_a)
+        .def(py::init([](double xStart, double xEnd, int nx, double yStart,
+                         double yEnd, int ny) {
+            return StructuredGrid{grid::LinearSpacing{xStart, xEnd, nx},
+                                  grid::LinearSpacing{yStart, yEnd, ny}};
+        }))
         .def_property_readonly("valid", &StructuredGrid::valid)
         .def_property_readonly("ny", &StructuredGrid::ny)
         .def_property_readonly(

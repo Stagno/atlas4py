@@ -21,3 +21,8 @@ pybind11_add_module(_atlas4py MODULE _atlas4py.cpp)
 target_link_libraries(_atlas4py PUBLIC atlas eckit)
 target_compile_features(_atlas4py PUBLIC cxx_std_17)
 
+pybind11_add_module(computation MODULE computation.cpp)
+target_link_libraries(computation PUBLIC atlas eckit)
+target_include_directories(computation PUBLIC /home/lukas/documents/work/dawn/dawn/prototype/)
+target_include_directories(computation PUBLIC /home/lukas/documents/work/dawn/dawn/src/)
+target_compile_features(computation PUBLIC cxx_std_17)
