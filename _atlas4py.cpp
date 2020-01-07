@@ -79,11 +79,6 @@ array::DataType pybindToAtlas(py::dtype const& dtype) {
 }  // namespace
 
 PYBIND11_MODULE(_atlas4py, m) {
-    py::class_<Grid>(m, "Grid")
-        .def_property_readonly("name", &StructuredGrid::name)
-        .def_property_readonly("uid", &StructuredGrid::uid)
-        .def_property_readonly("size", &StructuredGrid::size);
-
     py::class_<PointLonLat>(m, "PointLonLat")
         .def(py::init([](double lon, double lat) {
                  return PointLonLat({lon, lat});
@@ -111,6 +106,10 @@ PYBIND11_MODULE(_atlas4py, m) {
                    ", y=" + std::to_string(p.y()) + ")";
         });
 
+    py::class_<Grid>(m, "Grid")
+        .def_property_readonly("name", &Grid::name)
+        .def_property_readonly("uid", &Grid::uid)
+        .def_property_readonly("size", &Grid::size);
     py::class_<StructuredGrid, Grid>(m, "StructuredGrid")
         .def(py::init([](std::string const& s) { return StructuredGrid{s}; }),
              "gridname"_a)
@@ -131,7 +130,12 @@ PYBIND11_MODULE(_atlas4py, m) {
              "i"_a, "j"_a)
         .def_property_readonly("reduced", &StructuredGrid::reduced)
         .def_property_readonly("regular", &StructuredGrid::regular)
-        .def_property_readonly("periodic", &StructuredGrid::periodic);
+        .def_property_readonly("periodic", &StructuredGrid::periodic)
+        .def("__repr__", [](StructuredGrid const& g) {
+            return "_atlas4py.StructuredGrid(name=" + g.name() +
+                   ", maxnx=" + std::to_string(g.nxmax()) +
+                   ", ny=" + std::to_string(g.ny()) + ")";
+        });
 
     py::class_<StructuredMeshGenerator>(m, "StructuredMeshGenerator")
         .def(py::init())
@@ -145,13 +149,18 @@ PYBIND11_MODULE(_atlas4py, m) {
         .def_property("edges", py::overload_cast<>(&Mesh::edges, py::const_),
                       py::overload_cast<>(&Mesh::edges))
         .def_property("cells", py::overload_cast<>(&Mesh::cells, py::const_),
-                      py::overload_cast<>(&Mesh::cells))
-        .def_property_readonly("generated", &Mesh::generated);
+                      py::overload_cast<>(&Mesh::cells));
     m.def("build_edges", py::overload_cast<Mesh&>(&mesh::actions::build_edges));
     m.def("build_node_to_edge_connectivity",
           py::overload_cast<Mesh&>(
               &mesh::actions::build_node_to_edge_connectivity));
 
+    py::class_<mesh::IrregularConnectivity>(m, "IrregularConnectivity")
+        .def("__getitem__", [](mesh::IrregularConnectivity const& c,
+                               std::tuple<idx_t, idx_t> const& pos) {
+            auto const& [row, col] = pos;
+            return c(row, col);
+        });
     py::class_<mesh::MultiBlockConnectivity>(m, "MultiBlockConnectivity")
         .def("__getitem__", [](mesh::MultiBlockConnectivity const& c,
                                std::tuple<idx_t, idx_t> const& pos) {
@@ -165,9 +174,6 @@ PYBIND11_MODULE(_atlas4py, m) {
             "edge_connectivity",
             py::overload_cast<>(&mesh::Nodes::edge_connectivity, py::const_))
         .def_property_readonly(
-            "cell_connectivity",
-            py::overload_cast<>(&mesh::Nodes::cell_connectivity, py::const_))
-        .def_property_readonly(
             "lonlat", py::overload_cast<>(&Mesh::Nodes::lonlat, py::const_));
     py::class_<mesh::HybridElements>(m, "HybridElements")
         .def_property_readonly("size", &mesh::HybridElements::size)
@@ -180,10 +186,6 @@ PYBIND11_MODULE(_atlas4py, m) {
         .def_property_readonly(
             "edge_connectivity",
             py::overload_cast<>(&mesh::HybridElements::edge_connectivity,
-                                py::const_))
-        .def_property_readonly(
-            "cell_connectivity",
-            py::overload_cast<>(&mesh::HybridElements::cell_connectivity,
                                 py::const_));
 
     auto m_fs = m.def_submodule("functionspace");
@@ -195,6 +197,7 @@ PYBIND11_MODULE(_atlas4py, m) {
                 std::optional<int> levels, py::object dtype) {
                  util::Config config;
                  if (name) config = config | option::name(*name);
+                 // TODO what does it mean in atlas if levels is not set?
                  if (levels) config = config | option::levels(*levels);
                  config = config | option::datatype(pybindToAtlas(
                                        py::dtype::from_args(dtype)));
@@ -259,6 +262,10 @@ PYBIND11_MODULE(_atlas4py, m) {
         .def(py::init(
                  [](std::string const& path) { return output::Gmsh{path}; }),
              "path"_a)
+        .def("__enter__", [](output::Gmsh& gmsh) { return gmsh; })
+        .def("__exit__",
+             [](output::Gmsh& gmsh, py::object exc_type, py::object exc_val,
+                py::object exc_tb) { gmsh.reset(nullptr); })
         .def("write",
              [](output::Gmsh& gmsh, Mesh const& mesh) { gmsh.write(mesh); },
              "mesh"_a)

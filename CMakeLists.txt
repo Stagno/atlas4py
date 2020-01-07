@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.14.5)
 project(atlas4py LANGUAGES CXX)
 
 include(FetchContent)
-set(FETCHCONTENT_UPDATES_DISCONNECTED ON) 
+set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
 FetchContent_Declare(
     pybind11_fetch
     GIT_REPOSITORY https://github.com/pybind/pybind11
