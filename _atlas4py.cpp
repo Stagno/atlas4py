@@ -156,17 +156,39 @@ PYBIND11_MODULE(_atlas4py, m) {
               &mesh::actions::build_node_to_edge_connectivity));
 
     py::class_<mesh::IrregularConnectivity>(m, "IrregularConnectivity")
-        .def("__getitem__", [](mesh::IrregularConnectivity const& c,
-                               std::tuple<idx_t, idx_t> const& pos) {
-            auto const& [row, col] = pos;
-            return c(row, col);
-        });
+        .def("__getitem__",
+             [](mesh::IrregularConnectivity const& c,
+                std::tuple<idx_t, idx_t> const& pos) {
+                 auto const& [row, col] = pos;
+                 return c(row, col);
+             })
+        .def_property_readonly("rows", &mesh::IrregularConnectivity::rows)
+        .def("cols", &mesh::IrregularConnectivity::cols, "row_idx"_a);
     py::class_<mesh::MultiBlockConnectivity>(m, "MultiBlockConnectivity")
-        .def("__getitem__", [](mesh::MultiBlockConnectivity const& c,
-                               std::tuple<idx_t, idx_t> const& pos) {
-            auto const& [row, col] = pos;
-            return c(row, col);
-        });
+        .def("__getitem__",
+             [](mesh::MultiBlockConnectivity const& c,
+                std::tuple<idx_t, idx_t> const& pos) {
+                 auto const& [row, col] = pos;
+                 return c(row, col);
+             })
+        .def("__getitem__",
+             [](mesh::MultiBlockConnectivity const& c,
+                std::tuple<idx_t, idx_t, idx_t> const& pos) {
+                 auto const& [block, row, col] = pos;
+                 return c(block, row, col);
+             })
+        .def_property_readonly("blocks", &mesh::MultiBlockConnectivity::blocks)
+        .def("block", py::overload_cast<idx_t>(
+                          &mesh::MultiBlockConnectivity::block, py::const_));
+    py::class_<mesh::BlockConnectivity>(m, "BlockConnectivity")
+        .def("__getitem__",
+             [](mesh::BlockConnectivity const& c,
+                std::tuple<idx_t, idx_t> const& pos) {
+                 auto const& [row, col] = pos;
+                 return c(row, col);
+             })
+        .def_property_readonly("rows", &mesh::BlockConnectivity::rows)
+        .def_property_readonly("cols", &mesh::BlockConnectivity::cols);
 
     py::class_<mesh::Nodes>(m, "Nodes")
         .def_property_readonly("size", &mesh::Nodes::size)
