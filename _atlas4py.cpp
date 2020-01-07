@@ -28,6 +28,8 @@ setup_pybind11(cfg)
 #include "atlas/meshgenerator.h"
 #include "atlas/output/Gmsh.h"
 
+#include "eckit/value/Value.h"
+
 namespace py = ::pybind11;
 using namespace atlas;
 using namespace pybind11::literals;
@@ -150,7 +152,9 @@ PYBIND11_MODULE(_atlas4py, m) {
                       py::overload_cast<>(&Mesh::edges))
         .def_property("cells", py::overload_cast<>(&Mesh::cells, py::const_),
                       py::overload_cast<>(&Mesh::cells));
-    m.def("build_edges", py::overload_cast<Mesh&>(&mesh::actions::build_edges));
+    m.def("build_edges", [](Mesh& mesh) {
+        mesh::actions::build_edges(mesh, option::pole_edges(false));
+    });
     m.def("build_node_to_edge_connectivity",
           py::overload_cast<Mesh&>(
               &mesh::actions::build_node_to_edge_connectivity));
@@ -252,12 +256,43 @@ PYBIND11_MODULE(_atlas4py, m) {
         .def_property_readonly("valid", &functionspace::CellColumns::valid);
 
     py::class_<util::Metadata>(m, "Metadata")
-        .def("__setitem__", [](util::Metadata& m, std::string const& key,
-                               int value) { m.set(key, value); })
-        .def("__setitem__", [](util::Metadata& m, std::string const& key,
-                               std::string value) { m.set(key, value); })
-        .def("__setitem__", [](util::Metadata& m, std::string const& key,
-                               double value) { m.set(key, value); });
+        .def("__setitem__",
+             [](util::Metadata& m, std::string const& key, py::object value) {
+                 if (py::isinstance<py::bool_>(value))
+                     m.set(key, value.cast<bool>());
+                 else if (py::isinstance<py::int_>(value))
+                     m.set(key, value.cast<long long>());
+                 else if (py::isinstance<py::float_>(value))
+                     m.set(key, value.cast<double>());
+                 else if (py::isinstance<py::str>(value))
+                     m.set(key, value.cast<std::string>());
+                 else
+                     throw std::out_of_range("type of metadata unsupported");
+             })
+        .def("__getitem__",
+             [](util::Metadata& m, std::string const& key) -> py::object {
+                 if (!m.has(key))
+                     throw std::out_of_range("key <" + key +
+                                             "> could not be found");
+
+                 // TODO: We have to query m.get() even though this should not
+                 // be done (see comment in Metadata::get). We cannot avoid this
+                 // right now because otherwise we cannot query the type of the
+                 // underlying data.
+                 auto e = m.get().element(key);
+
+                 if (e.isBool())
+                     return py::bool_(e.as<bool>());
+                 else if (e.isNumber())
+                     return py::int_(e.as<long long>());
+                 else if (e.isDouble())
+                     return py::float_(e.as<double>());
+                 else if (e.isString())
+                     return py::str(e.as<std::string>());
+                 else
+                     throw std::out_of_range("type of metadata unsupported (" +
+                                             e.typeName() + ")");
+             });
 
     py::class_<Field>(m, "Field", py::buffer_protocol())
         .def_property_readonly("name", &Field::name)
