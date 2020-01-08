@@ -48,6 +48,27 @@ struct type_caster<atlas::array::ArrayShape>
 }  // namespace pybind11
 
 namespace {
+
+py::object toPyObject(eckit::Value const& v) {
+    if (v.isBool())
+        return py::bool_(v.as<bool>());
+    else if (v.isNumber())
+        return py::int_(v.as<long long>());
+    else if (v.isDouble())
+        return py::float_(v.as<double>());
+    else if (v.isMap()) {
+        py::dict ret;
+        auto const& map = v.as<eckit::ValueMap>();
+        for (auto const& [k, v] : map) {
+            ret[k.as<std::string>().c_str()] = toPyObject(v);
+        }
+        return ret;
+    } else if (v.isString())
+        return py::str(v.as<std::string>());
+    else
+        throw std::out_of_range("type of value unsupported (" + v.typeName() +
+                                ")");
+}
 std::string atlasToPybind(array::DataType const& dt) {
     switch (dt.kind()) {
         case array::DataType::KIND_INT32:
@@ -111,7 +132,12 @@ PYBIND11_MODULE(_atlas4py, m) {
     py::class_<Grid>(m, "Grid")
         .def_property_readonly("name", &Grid::name)
         .def_property_readonly("uid", &Grid::uid)
-        .def_property_readonly("size", &Grid::size);
+        .def_property_readonly("size", &Grid::size)
+        .def("__repr__", [](Grid const& g) {
+            return "_atlas4py.Grid("_s + py::str(toPyObject(g.spec().get())) +
+                   ")"_s;
+        });
+
     py::class_<grid::Spacing>(m, "Spacing");
     py::class_<grid::LinearSpacing, grid::Spacing>(m, "LinearSpacing")
         .def(py::init([](double start, double stop, long N, bool endpoint) {
@@ -153,12 +179,7 @@ PYBIND11_MODULE(_atlas4py, m) {
              "i"_a, "j"_a)
         .def_property_readonly("reduced", &StructuredGrid::reduced)
         .def_property_readonly("regular", &StructuredGrid::regular)
-        .def_property_readonly("periodic", &StructuredGrid::periodic)
-        .def("__repr__", [](StructuredGrid const& g) {
-            return "_atlas4py.StructuredGrid(name=" + g.name() +
-                   ", maxnx=" + std::to_string(g.nxmax()) +
-                   ", ny=" + std::to_string(g.ny()) + ")";
-        });
+        .def_property_readonly("periodic", &StructuredGrid::periodic);
 
     py::class_<StructuredMeshGenerator>(m, "StructuredMeshGenerator")
         .def(py::init())
@@ -268,8 +289,11 @@ PYBIND11_MODULE(_atlas4py, m) {
         .def_property_readonly("nodes", &functionspace::NodeColumns::nodes)
         .def_property_readonly("valid", &functionspace::NodeColumns::valid);
     py::class_<functionspace::CellColumns, FunctionSpace>(m_fs, "CellColumns")
-        .def(py::init(
-            [](Mesh const& m) { return functionspace::CellColumns(m); }))
+        .def(py::init([](Mesh const& m, int halo) {
+                 return functionspace::CellColumns(
+                     m, util::Config()("halo", halo));
+             }),
+             "mesh"_a, "halo"_a = 0)
         .def_property_readonly("nb_cells",
                                &functionspace::CellColumns::nb_cells)
         .def_property_readonly("mesh", &functionspace::CellColumns::mesh)
@@ -277,43 +301,38 @@ PYBIND11_MODULE(_atlas4py, m) {
         .def_property_readonly("valid", &functionspace::CellColumns::valid);
 
     py::class_<util::Metadata>(m, "Metadata")
+        .def_property_readonly("keys", &util::Metadata::keys)
         .def("__setitem__",
-             [](util::Metadata& m, std::string const& key, py::object value) {
+             [](util::Metadata& metadata, std::string const& key,
+                py::object value) {
                  if (py::isinstance<py::bool_>(value))
-                     m.set(key, value.cast<bool>());
+                     metadata.set(key, value.cast<bool>());
                  else if (py::isinstance<py::int_>(value))
-                     m.set(key, value.cast<long long>());
+                     metadata.set(key, value.cast<long long>());
                  else if (py::isinstance<py::float_>(value))
-                     m.set(key, value.cast<double>());
+                     metadata.set(key, value.cast<double>());
                  else if (py::isinstance<py::str>(value))
-                     m.set(key, value.cast<std::string>());
+                     metadata.set(key, value.cast<std::string>());
                  else
-                     throw std::out_of_range("type of metadata unsupported");
+                     throw std::out_of_range("type of value unsupported");
              })
-        .def("__getitem__",
-             [](util::Metadata& m, std::string const& key) -> py::object {
-                 if (!m.has(key))
-                     throw std::out_of_range("key <" + key +
-                                             "> could not be found");
+        .def(
+            "__getitem__",
+            [](util::Metadata& metadata, std::string const& key) -> py::object {
+                if (!metadata.has(key))
+                    throw std::out_of_range("key <" + key +
+                                            "> could not be found");
 
-                 // TODO: We have to query m.get() even though this should not
-                 // be done (see comment in Metadata::get). We cannot avoid this
-                 // right now because otherwise we cannot query the type of the
-                 // underlying data.
-                 auto e = m.get().element(key);
-
-                 if (e.isBool())
-                     return py::bool_(e.as<bool>());
-                 else if (e.isNumber())
-                     return py::int_(e.as<long long>());
-                 else if (e.isDouble())
-                     return py::float_(e.as<double>());
-                 else if (e.isString())
-                     return py::str(e.as<std::string>());
-                 else
-                     throw std::out_of_range("type of metadata unsupported (" +
-                                             e.typeName() + ")");
-             });
+                // TODO: We have to query metadata.get() even though this should
+                // not be done (see comment in Config::get). We cannot
+                // avoid this right now because otherwise we cannot query
+                // the type of the underlying data.
+                return toPyObject(metadata.get().element(key));
+            })
+        .def("__repr__", [](util::Metadata const& metadata) {
+            return "_atlas4py.Metadata("_s +
+                   py::str(toPyObject(metadata.get())) + ")"_s;
+        });
 
     py::class_<Field>(m, "Field", py::buffer_protocol())
         .def_property_readonly("name", &Field::name)
