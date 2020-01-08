@@ -112,14 +112,30 @@ PYBIND11_MODULE(_atlas4py, m) {
         .def_property_readonly("name", &Grid::name)
         .def_property_readonly("uid", &Grid::uid)
         .def_property_readonly("size", &Grid::size);
+    py::class_<grid::Spacing>(m, "Spacing");
+    py::class_<grid::LinearSpacing, grid::Spacing>(m, "LinearSpacing")
+        .def(py::init([](double start, double stop, long N, bool endpoint) {
+                 return grid::LinearSpacing{start, stop, N, endpoint};
+             }),
+             "start"_a, "stop"_a, "N"_a, "endpoint_included"_a = true);
+    py::class_<grid::GaussianSpacing, grid::Spacing>(m, "GaussianSpacing")
+        .def(py::init([](long N) { return grid::GaussianSpacing{N}; }), "N"_a);
+
     py::class_<StructuredGrid, Grid>(m, "StructuredGrid")
         .def(py::init([](std::string const& s) { return StructuredGrid{s}; }),
              "gridname"_a)
-        .def(py::init([](double xStart, double xEnd, int nx, double yStart,
-                         double yEnd, int ny) {
-            return StructuredGrid{grid::LinearSpacing{xStart, xEnd, nx},
-                                  grid::LinearSpacing{yStart, yEnd, ny}};
-        }))
+        .def(py::init([](grid::LinearSpacing xSpacing, grid::Spacing ySpacing) {
+                 return StructuredGrid{xSpacing, ySpacing};
+             }),
+             "x_spacing"_a, "y_spacing"_a)
+        .def(py::init([](std::vector<grid::LinearSpacing> xLinearSpacings,
+                         grid::Spacing ySpacing) {
+                 std::vector<grid::Spacing> xSpacings;
+                 std::copy(xLinearSpacings.begin(), xLinearSpacings.end(),
+                           std::back_inserter(xSpacings));
+                 return StructuredGrid{xSpacings, ySpacing};
+             }),
+             "x_spacings"_a, "y_spacing"_a)
         .def_property_readonly("valid", &StructuredGrid::valid)
         .def_property_readonly("ny", &StructuredGrid::ny)
         .def_property_readonly(
